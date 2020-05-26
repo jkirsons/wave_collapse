@@ -122,10 +122,12 @@ void WaveCollapse::generate_combinations() {
         }
     }
 
-    // Generate bitmasks
+    // Generate bitmask indexes
+    int index = 1;
     for(auto const& [dir, tiles] : valid_combinations) {
         for(auto const& [tile, other_tiles] : tiles) {
-            
+            tile_mask_index[tile] = index;
+            index++;
         }
     } 
 }
