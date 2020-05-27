@@ -6,6 +6,7 @@
 #include <map>
 #include <vector>
 #include <set>
+#include <functional>
 
 #define orth_index(i) Basis(Quat(Vector3(0, 1, 0), -0.5 * i  * M_PI)).get_orthogonal_index()
 
@@ -20,11 +21,15 @@ class WaveCollapse : public Node3D {
             return tile < o.tile;
         }
     };
+
+    const int num_to_bits[16] = { 0, 1, 1, 2, 1, 2, 2, 3, 1, 2, 2, 3, 2, 3, 3, 4 }; 
     
     const std::vector<Vector3> directions = {Vector3(0,-1,0), Vector3(1,0,0), Vector3(0,1,0), Vector3(-1,0,0)};
 
     // internal indexes used by GridMap cell orientation
     const std::vector<int> orthagonal_indices = {orth_index(0), orth_index(1), orth_index(2), orth_index(3)};
+
+    unsigned int _countSetBitsRec(unsigned int num);
 
     NodePath template_gridmap_path;
     GridMap* template_gridmap;
@@ -47,6 +52,10 @@ class WaveCollapse : public Node3D {
     template<typename T> T* _path_to_object(const NodePath &path);
     unsigned short _rotate_tile(int init_orth_index, int steps);
     int _rotate_direction(int init_direction, int steps);
+    float _shannon_entropy(Vector3 position);
+
+    void _bitmask_iterator(const std::vector<unsigned char> &bitmask, const std::function<void(int)> &func);
+
 
 protected:
     static void _bind_methods();

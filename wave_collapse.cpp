@@ -132,6 +132,66 @@ void WaveCollapse::generate_combinations() {
     } 
 }
 
+/**
+ * call a function for all bits in a bitmask
+ */
+void WaveCollapse::_bitmask_iterator(const std::vector<unsigned char>& bitmask, const std::function<void(int)>& func) {
+    int index;
+    for(const auto& part : bitmask) {
+        // No bits in this part
+        for(int i = 0; i < 8; i++) {
+            if(part >> i == 0)
+                break;
+            if(part >> i && 1)
+                func(index * 8 + i);
+        }
+        index++;
+    }
+}
+  
+/* Recursively get nibble of a given number  
+and map them in the array */
+unsigned int WaveCollapse::_countSetBitsRec(unsigned int num) 
+{ 
+    int nibble = 0; 
+    if (0 == num) 
+        return num_to_bits[0]; 
+  
+    // Find last nibble 
+    nibble = num & 0xf; 
+  
+    // Use pre-stored values to find count 
+    // in last nibble plus recursively add 
+    // remaining nibbles. 
+    return num_to_bits[nibble] + _countSetBitsRec(num >> 4); 
+} 
+
+float WaveCollapse::_shannon_entropy(Vector3 position)
+{
+    /*
+		"""Calculates the Shannon Entropy of the wavefunction at `co_ords`."""
+		var sum_of_weights = 0
+		var sum_of_weight_log_weights = 0
+		for opt in self.coefficients[Vector2(co_ords[0], co_ords[1])]:
+			var weight = self.weights[opt]
+			sum_of_weights += weight
+			sum_of_weight_log_weights += log_weights[opt] #weight * log(weight)
+		return log(sum_of_weights) - (sum_of_weight_log_weights / sum_of_weights)
+    */
+    //float sum_of_weights = 0.0;
+    //float sum_of_weight_log_weights = 0.0;
+    if(unresolved_tiles.find(position) != unresolved_tiles.end()) {
+        unsigned int count = 0;
+        for(auto const& part : unresolved_tiles[position]) {
+            count += _countSetBitsRec(part);
+        }
+        float weight;
+        _bitmask_iterator(unresolved_tiles[position], [&](int index){ weight += weights[index]; });
+
+    }
+    return 0.0;
+}
+
 WaveCollapse::WaveCollapse() {
     template_gridmap = nullptr;
     output_gridmap = nullptr;
