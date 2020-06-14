@@ -1,9 +1,43 @@
 #include "wave_collapse.h"
 #include <algorithm>
 
-void WaveCollapse::_on_Player_position_changed(Vector3 position, int collapse_radius)
-{
+WaveCollapse::WaveCollapse() {
+    setup_done = false;
+}
 
+void WaveCollapse::_bind_methods() {
+    // exposed methods
+    ClassDB::bind_method(D_METHOD("_on_Player_position_changed"), &WaveCollapse::_on_Player_position_changed);
+    ClassDB::bind_method(D_METHOD("process"), &WaveCollapse::process);
+    ClassDB::bind_method(D_METHOD("set_template_gridmap"), &WaveCollapse::set_template_gridmap);
+    ClassDB::bind_method(D_METHOD("get_template_gridmap"), &WaveCollapse::get_template_gridmap);
+    ClassDB::bind_method(D_METHOD("set_output_gridmap"), &WaveCollapse::set_output_gridmap);
+    ClassDB::bind_method(D_METHOD("get_output_gridmap"), &WaveCollapse::get_output_gridmap);
+
+    // inspector properties
+    ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "Template Gridmap", PROPERTY_HINT_NODE_PATH_VALID_TYPES), "set_template_gridmap", "get_template_gridmap");
+    ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "Output Gridmap", PROPERTY_HINT_NODE_PATH_VALID_TYPES), "set_output_gridmap", "get_output_gridmap");
+    
+    // signals emitted
+    ADD_SIGNAL(MethodInfo("cell_changed", PropertyInfo(Variant::VECTOR3, "cell"), PropertyInfo(Variant::INT, "tile"), PropertyInfo(Variant::INT, "orientation")));
+}
+
+void WaveCollapse::set_template_gridmap(const NodePath &template_gridmap) {
+    this->template_gridmap_path = template_gridmap;
+    this->template_gridmap = _path_to_object<GridMap>(template_gridmap);
+}
+
+NodePath WaveCollapse::get_template_gridmap() const {
+    return template_gridmap_path;
+}
+
+void WaveCollapse::set_output_gridmap(const NodePath &output_gridmap) {
+    this->output_gridmap_path = output_gridmap;
+    this->output_gridmap = _path_to_object<GridMap>(output_gridmap);
+}
+
+NodePath WaveCollapse::get_output_gridmap() const {
+    return output_gridmap_path;
 }
 
 template<typename T>
@@ -24,38 +58,6 @@ T* WaveCollapse::_path_to_object(const NodePath &path)
     return obj;
 }
 
-void WaveCollapse::set_template_gridmap(const NodePath &template_gridmap) {
-    this->template_gridmap_path = template_gridmap;
-    this->template_gridmap = _path_to_object<GridMap>(template_gridmap);
-    generate_combinations();
-}
-
-NodePath WaveCollapse::get_template_gridmap() const {
-    return template_gridmap_path;
-}
-
-void WaveCollapse::set_output_gridmap(const NodePath &output_gridmap) {
-    this->output_gridmap_path = output_gridmap;
-    this->output_gridmap = _path_to_object<GridMap>(output_gridmap);
-}
-
-NodePath WaveCollapse::get_output_gridmap() const {
-    return output_gridmap_path;
-}
-
-void WaveCollapse::_bind_methods() {
-    ClassDB::bind_method(D_METHOD("set_template_gridmap"), &WaveCollapse::set_template_gridmap);
-    ClassDB::bind_method(D_METHOD("get_template_gridmap"), &WaveCollapse::get_template_gridmap);
-
-    ClassDB::bind_method(D_METHOD("set_output_gridmap"), &WaveCollapse::set_output_gridmap);
-    ClassDB::bind_method(D_METHOD("get_output_gridmap"), &WaveCollapse::get_output_gridmap);
-
-    ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "Template Gridmap", PROPERTY_HINT_NODE_PATH_VALID_TYPES), "set_template_gridmap", "get_template_gridmap");
-    ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "Output Gridmap", PROPERTY_HINT_NODE_PATH_VALID_TYPES), "set_output_gridmap", "get_output_gridmap");
-    ADD_SIGNAL(MethodInfo("cell_changed", PropertyInfo(Variant::VECTOR3, "cell"), PropertyInfo(Variant::INT, "tile"), PropertyInfo(Variant::INT, "orientation")));
-
-}
-
 unsigned short WaveCollapse::_rotate_tile(int init_orth_index, int steps) {
     unsigned short dir = 0;
     for(unsigned int i = 0; i < orthagonal_indices.size(); i++) {
@@ -72,9 +74,52 @@ unsigned short WaveCollapse::_rotate_tile(int init_orth_index, int steps) {
 
 int WaveCollapse::_rotate_direction(int init_direction, int steps) {
     int dir = init_direction + steps;
-    if((std::size_t)dir >= directions.size())
-        dir -= directions.size(); 
+    if((std::size_t)dir >= directions.size()) {
+        dir -= directions.size();
+    }
     return dir;
+}
+
+/**
+ * call a function for all bits in a bitmask
+ */
+void WaveCollapse::for_each_tile_in_bitmask(const std::vector<unsigned char>& bitmask, const std::function<void(int)>& func) {
+    int index = 0;
+    for(const auto& part : bitmask) {
+        // No bits in this part
+        for(int i = 0; i < (int)sizeof(bitmask); i++) {
+            if(part >> i == 0)
+                break;
+            if(part >> i && 1)
+                func(index * (int)sizeof(bitmask) + i);
+        }
+        index += sizeof(bitmask);
+    }
+}
+
+/**
+ * sets the flag for one tile in the valid bitmask
+ */
+void WaveCollapse::_bitmask_set_valid(const int& dir, const int& tile, const int& other_tile) {
+    int other_tile_int = other_tile;
+
+    // No valid mask yet
+    if(valid_combinations_mask[dir].find(tile_mask_reverse_index[tile]) == valid_combinations_mask[dir].end()) {
+        for(int i = 0;  i < ceil(tile_mask_index.size() / 8.0); i++) {
+            valid_combinations_mask[dir][tile_mask_reverse_index[tile]].push_back(0x00);
+        }
+    }
+
+    // Set bit
+    for(auto& part : valid_combinations_mask[dir][tile_mask_reverse_index[tile]]) {
+        if(other_tile_int < 0xFF) {
+            part = part || other_tile_int;
+        }
+        other_tile_int >>= 8;
+        if(other_tile == 0) {
+            break;
+        }
+    }
 }
 
 void WaveCollapse::generate_combinations() {
@@ -95,14 +140,15 @@ void WaveCollapse::generate_combinations() {
             template_gridmap->get_cell_item_orientation(vec.x, vec.y, vec.z)));
     }
 
-    // Generate combinations
+    // Generate valid tile combinations
+    int index = 1;    
     for(auto const& [pos, tile] : template_map_tile) {
-        for(unsigned int d = 0; d < directions.size(); d++) {
+        for(unsigned int d = 0; d < directions.size(); ++d) {
             Vector3 other_pos = pos + directions[d];
             if(template_map_tile.count(other_pos) > 0) {
                 for(int r = 0; r < 4; r++) {
                     unsigned short tile_rot = _rotate_tile(template_map_rotation[pos], r);
-                    int other_tile = template_map_rotation[other_pos];
+                    int other_tile = template_map_tile[other_pos];
                     unsigned short other_tile_rot = _rotate_tile(template_map_rotation[other_pos], r);
                     int direction_index = _rotate_direction(d, r);
 
@@ -112,87 +158,185 @@ void WaveCollapse::generate_combinations() {
                     if(std::binary_search(symetric_tiles.begin(), symetric_tiles.end(), other_tile)) {
                         other_tile_rot = 0;
                     }
-
-                    if(d == 0)
-                        weights[tile] += 1;
                     
-                    valid_combinations[direction_index][Tile{tile, tile_rot}].insert(Tile{other_tile, other_tile_rot});
+                    Tile t = Tile(tile, orthagonal_indices[tile_rot]);
+                    Tile ot = Tile(other_tile, orthagonal_indices[other_tile_rot]);
+
+                    valid_combinations[direction_index][t].insert(ot);
+
+                    // Generate bitmask indexes
+                    if(tile_mask_index.find(t) == tile_mask_index.end()) {
+                        tile_mask_index[t] = index;
+                        tile_mask_reverse_index[index] = t;
+                        index++;
+                    }
+
+                    // Set weights
+                    //if(d == 0) {
+                        weights[tile_mask_index[t]] += 1;
+                    //}                    
                 }
             }
         }
     }
 
-    // Generate bitmask indexes
-    int index = 1;
-    for(auto const& [dir, tiles] : valid_combinations) {
-        for(auto const& [tile, other_tiles] : tiles) {
-            tile_mask_index[tile] = index;
-            index++;
+    for(unsigned int d = 0; d < directions.size(); ++d) {
+        for(const auto& [tile, other_tiles] : valid_combinations[d]) {
+            for(const auto& other_tile : other_tiles) {
+                _bitmask_set_valid(d, tile_mask_index[tile], tile_mask_index[other_tile]);
+            }
         }
-    } 
-}
-
-/**
- * call a function for all bits in a bitmask
- */
-void WaveCollapse::_bitmask_iterator(const std::vector<unsigned char>& bitmask, const std::function<void(int)>& func) {
-    int index;
-    for(const auto& part : bitmask) {
-        // No bits in this part
-        for(int i = 0; i < 8; i++) {
-            if(part >> i == 0)
-                break;
-            if(part >> i && 1)
-                func(index * 8 + i);
-        }
-        index++;
     }
+
 }
-  
-/* Recursively get nibble of a given number  
-and map them in the array */
-unsigned int WaveCollapse::_countSetBitsRec(unsigned int num) 
-{ 
-    int nibble = 0; 
-    if (0 == num) 
-        return num_to_bits[0]; 
-  
-    // Find last nibble 
-    nibble = num & 0xf; 
-  
-    // Use pre-stored values to find count 
-    // in last nibble plus recursively add 
-    // remaining nibbles. 
-    return num_to_bits[nibble] + _countSetBitsRec(num >> 4); 
-} 
 
 float WaveCollapse::_shannon_entropy(Vector3 position)
 {
-    /*
-		"""Calculates the Shannon Entropy of the wavefunction at `co_ords`."""
-		var sum_of_weights = 0
-		var sum_of_weight_log_weights = 0
-		for opt in self.coefficients[Vector2(co_ords[0], co_ords[1])]:
-			var weight = self.weights[opt]
-			sum_of_weights += weight
-			sum_of_weight_log_weights += log_weights[opt] #weight * log(weight)
-		return log(sum_of_weights) - (sum_of_weight_log_weights / sum_of_weights)
-    */
-    //float sum_of_weights = 0.0;
-    //float sum_of_weight_log_weights = 0.0;
+    float sum_of_weights = 0.0;
+    float sum_of_weight_log_weights = 0.0;
     if(unresolved_tiles.find(position) != unresolved_tiles.end()) {
-        unsigned int count = 0;
-        for(auto const& part : unresolved_tiles[position]) {
-            count += _countSetBitsRec(part);
-        }
-        float weight;
-        _bitmask_iterator(unresolved_tiles[position], [&](int index){ weight += weights[index]; });
+        for_each_tile_in_bitmask(unresolved_tiles[position], [&](int index){ 
+            sum_of_weights += weights[index]; 
+            sum_of_weight_log_weights += weights[index] * log(weights[index]);
+        });
 
     }
-    return 0.0;
+    return log(sum_of_weights) - (sum_of_weight_log_weights / sum_of_weights);
 }
 
-WaveCollapse::WaveCollapse() {
-    template_gridmap = nullptr;
-    output_gridmap = nullptr;
+Vector3 WaveCollapse::_min_entropy_co_ords() {
+    float min_entropy = 0.0;
+    Vector3 min_entropy_co_ords = Vector3();
+    for(const auto& tile : unresolved_tiles) {
+        if(tile.first.distance_squared_to(player_position) <= radius_squared) {
+            float entropy = _shannon_entropy(tile.first) + rand() % 100 / 100000;
+            if( min_entropy == 0.0 || entropy < min_entropy) {
+                min_entropy = entropy;
+                min_entropy_co_ords = tile.first;
+            }
+        }
+    }
+    return min_entropy_co_ords;
+}
+
+void WaveCollapse::_new_tile(const Vector3& position) {
+    int size = tile_mask_index.size();
+    for(int i = 0;  i < ceil( size / sizeof(unsigned char)); ++i) {
+        unresolved_tiles[position].push_back(std::min(0xFF, size - (i*(int)sizeof(unsigned char))));
+    }
+}
+
+void WaveCollapse::_collapse(const Vector3& position) {
+    int total_weights = 0;
+    int chosen = -1;
+    if(unresolved_tiles.find(position) != unresolved_tiles.end()) {
+        for_each_tile_in_bitmask(unresolved_tiles[position], [&](int index){ 
+            total_weights += weights[index];
+        });
+
+        float rnd = (rand() % 1000 / 1000) * total_weights;
+
+        for_each_tile_in_bitmask(unresolved_tiles[position], [&](int index){ 
+            rnd -= weights[index];
+            if(rnd < 0.0 && chosen == -1) {
+                resolved_tiles[position] = tile_mask_reverse_index[index];
+                chosen = index;
+            }
+        });
+        unresolved_tiles.erase(position);
+    }
+}
+
+void WaveCollapse::_propagate(const Vector3& position) {
+    std::vector<Vector3> stack;
+    stack.push_back(position);
+
+    while(!stack.empty()) {
+        Vector3 cur_coords = stack.back();
+        stack.pop_back();
+        
+        for(unsigned int d = 0; d < directions.size(); ++d) {
+            Vector3 other_position = cur_coords + directions[d];
+            bool changed = false;
+
+            if(unresolved_tiles.find(other_position) != unresolved_tiles.end()) {
+                for_each_tile_in_bitmask(unresolved_tiles[position], [&](int index){
+                    std::vector<unsigned char>& valid_bitmask = valid_combinations_mask[d][tile_mask_reverse_index[index]];
+                    
+                    for(unsigned char i = 0; i < unresolved_tiles[other_position].size(); ++i) {
+                        // bitwise and with valid tiles
+                        unsigned char new_mask = unresolved_tiles[other_position][i] && valid_bitmask[i];
+                        if(!changed && new_mask != unresolved_tiles[other_position][i]) {
+                            changed = true;
+                        }
+                        unresolved_tiles[other_position][i] = new_mask;
+                    }
+                });
+            } else if(resolved_tiles.find(other_position) == resolved_tiles.end()) {
+                // Add tile
+                _new_tile(other_position);
+            }
+            if(changed) {
+                stack.push_back(other_position);
+            }
+        }
+    }
+}
+
+bool WaveCollapse::_within_radius(const Vector3& position) {
+    if(position.x*position.x + position.z*position.z <= radius_squared)
+        return true;
+    return false;
+}
+
+void WaveCollapse::_iterate() {
+    Vector3 co_ords = _min_entropy_co_ords();
+    _collapse(co_ords);
+    _propagate(co_ords);
+    emit_signal("cell_changed", co_ords, resolved_tiles[co_ords].tile, resolved_tiles[co_ords].rotation);
+}
+
+void WaveCollapse::process() {
+    bool collapsed = true;
+    for(auto const& tile : unresolved_tiles) {
+        if(_within_radius(tile.first)) {
+            collapsed = false;
+            break;
+        }
+    }
+
+    if(!collapsed) {
+        _iterate();
+    }
+}
+
+void WaveCollapse::_on_Player_position_changed(Vector3 position, int collapse_radius)
+{
+    if(position != player_position) {
+        player_position = position;  
+        this->radius = collapse_radius;
+        this->radius_squared = radius * radius;
+    }
+    if(!setup_done) {
+        _setup(0);
+    }
+}
+
+void WaveCollapse::_setup(int y) {
+    if(this->template_gridmap == nullptr) {
+        this->template_gridmap = _path_to_object<GridMap>(this->template_gridmap_path);
+    }
+    // initialize tiles
+    if(!setup_done) {
+        generate_combinations();
+
+        for(int x = -radius; x <= radius; ++x) {
+            for(int z = -radius; z <= radius; ++z) {
+                if(_within_radius(Vector3(x,y,z))) {
+                    _new_tile(Vector3(x,y,z));
+                }
+            }
+        }
+    }
+    setup_done = true;
 }
