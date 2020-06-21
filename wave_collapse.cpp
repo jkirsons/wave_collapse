@@ -86,14 +86,14 @@ int WaveCollapse::_rotate_direction(int init_direction, int steps) {
 void WaveCollapse::for_each_tile_in_bitmask(const std::vector<unsigned char>& bitmask, const std::function<void(int)>& func) {
     int index = 0;
     for(const auto& part : bitmask) {
-        // No bits in this part
-        for(int i = 0; i < (int)sizeof(bitmask); i++) {
+        for(int i = 0; i < 8; i++) {
+            // No bits in this part
             if(part >> i == 0)
                 break;
-            if(part >> i && 1)
-                func(index * (int)sizeof(bitmask) + i);
+            if((part >> i) & 1)
+                func(index * 8 + i);
         }
-        index += sizeof(bitmask);
+        index += 1;
     }
 }
 
@@ -113,7 +113,7 @@ void WaveCollapse::_bitmask_set_valid(const int& dir, const int& tile, const int
     // Set bit
     for(auto& part : valid_combinations_mask[dir][tile_mask_reverse_index[tile]]) {
         if(other_tile_int < 0xFF) {
-            part = part || other_tile_int;
+            part = part | other_tile_int;
         }
         other_tile_int >>= 8;
         if(other_tile == 0) {
@@ -197,9 +197,14 @@ float WaveCollapse::_shannon_entropy(Vector3 position)
     if(unresolved_tiles.find(position) != unresolved_tiles.end()) {
         for_each_tile_in_bitmask(unresolved_tiles[position], [&](int index){ 
             sum_of_weights += weights[index]; 
-            sum_of_weight_log_weights += weights[index] * log(weights[index]);
+            if(weights[index] != 0) {
+                sum_of_weight_log_weights += (weights[index] * log(weights[index]));
+            }
         });
 
+    }
+    if(sum_of_weights == 0) {
+        return 999.0;
     }
     return log(sum_of_weights) - (sum_of_weight_log_weights / sum_of_weights);
 }
@@ -209,7 +214,7 @@ Vector3 WaveCollapse::_min_entropy_co_ords() {
     Vector3 min_entropy_co_ords = Vector3();
     for(const auto& tile : unresolved_tiles) {
         if(tile.first.distance_squared_to(player_position) <= radius_squared) {
-            float entropy = _shannon_entropy(tile.first) + rand() % 100 / 100000;
+            float entropy = _shannon_entropy(tile.first) + (rand() % 100) / 100000.0;
             if( min_entropy == 0.0 || entropy < min_entropy) {
                 min_entropy = entropy;
                 min_entropy_co_ords = tile.first;
@@ -221,20 +226,23 @@ Vector3 WaveCollapse::_min_entropy_co_ords() {
 
 void WaveCollapse::_new_tile(const Vector3& position) {
     int size = tile_mask_index.size();
-    for(int i = 0;  i < ceil( size / sizeof(unsigned char)); ++i) {
-        unresolved_tiles[position].push_back(std::min(0xFF, size - (i*(int)sizeof(unsigned char))));
+    int char_size = sizeof(unsigned char) * 8;
+    for(int i = 0;  i < ceil( (float)size / (float)char_size); ++i) {
+        int val = std::pow(2, size - i*8 + 1) - 1;
+        unresolved_tiles[position].push_back(std::min(0xFF, val));
     }
 }
 
 void WaveCollapse::_collapse(const Vector3& position) {
     int total_weights = 0;
     int chosen = -1;
-    if(unresolved_tiles.find(position) != unresolved_tiles.end()) {
+    auto iterator = unresolved_tiles.find(position);
+    if( iterator != unresolved_tiles.end()) {
         for_each_tile_in_bitmask(unresolved_tiles[position], [&](int index){ 
             total_weights += weights[index];
         });
 
-        float rnd = (rand() % 1000 / 1000) * total_weights;
+        float rnd = (rand() % 1000 / 1000.0) * total_weights;
 
         for_each_tile_in_bitmask(unresolved_tiles[position], [&](int index){ 
             rnd -= weights[index];
@@ -243,7 +251,21 @@ void WaveCollapse::_collapse(const Vector3& position) {
                 chosen = index;
             }
         });
-        unresolved_tiles.erase(position);
+
+        // set mask temporarily for propagation
+        int index = 0;
+        for(auto& part : unresolved_tiles[position]) {
+            part = 0;
+            for(int i = 0; i < 8; i++) {
+                if(index * 8 + i == chosen)
+                    part = pow(2, i);
+            }
+            index += 1;
+        }
+
+        _propagate(position);
+        
+        unresolved_tiles.erase(iterator);
     }
 }
 
@@ -257,21 +279,35 @@ void WaveCollapse::_propagate(const Vector3& position) {
         
         for(unsigned int d = 0; d < directions.size(); ++d) {
             Vector3 other_position = cur_coords + directions[d];
+            if(other_position == position) { 
+                continue;  // don't propagate back to original point
+            }
             bool changed = false;
 
             if(unresolved_tiles.find(other_position) != unresolved_tiles.end()) {
-                for_each_tile_in_bitmask(unresolved_tiles[position], [&](int index){
-                    std::vector<unsigned char>& valid_bitmask = valid_combinations_mask[d][tile_mask_reverse_index[index]];
-                    
-                    for(unsigned char i = 0; i < unresolved_tiles[other_position].size(); ++i) {
-                        // bitwise and with valid tiles
-                        unsigned char new_mask = unresolved_tiles[other_position][i] && valid_bitmask[i];
-                        if(!changed && new_mask != unresolved_tiles[other_position][i]) {
-                            changed = true;
+                auto unresolved = unresolved_tiles[cur_coords];
+                std::vector<unsigned char> valid_bitmask = {};
+                for_each_tile_in_bitmask(unresolved_tiles[cur_coords], [&](int index){
+                    if(valid_bitmask.empty()) {
+                        valid_bitmask = valid_combinations_mask[d][tile_mask_reverse_index[index]];
+                    } else {
+                        for(int i = 0; i < (int)valid_bitmask.size(); ++i) {
+                            valid_bitmask[i] |= valid_combinations_mask[d][tile_mask_reverse_index[index]][i];
                         }
-                        unresolved_tiles[other_position][i] = new_mask;
                     }
                 });
+
+                for(int i = 0; i < (int)unresolved_tiles[other_position].size(); ++i) {
+                    // bitwise and with valid tiles
+                    unsigned char new_mask = unresolved_tiles[other_position][i] & valid_bitmask[i];
+                    unsigned char old_mask = unresolved_tiles[other_position][i];
+                    if(new_mask != old_mask) {
+                        if(!changed)
+                            changed = true;
+                        unresolved_tiles[other_position][i] = new_mask;
+                    }
+                }
+
             } else if(resolved_tiles.find(other_position) == resolved_tiles.end()) {
                 // Add tile
                 _new_tile(other_position);
@@ -292,7 +328,6 @@ bool WaveCollapse::_within_radius(const Vector3& position) {
 void WaveCollapse::_iterate() {
     Vector3 co_ords = _min_entropy_co_ords();
     _collapse(co_ords);
-    _propagate(co_ords);
     emit_signal("cell_changed", co_ords, resolved_tiles[co_ords].tile, resolved_tiles[co_ords].rotation);
 }
 

@@ -19,8 +19,11 @@ class WaveCollapse : public Node3D {
         Tile() {}
         Tile(int t, unsigned short r) : tile(t), rotation(r) {} 
         
-        bool operator<(const Tile &o) const{
-            return tile < o.tile ||  (tile == o.tile && rotation < o.rotation);
+        //bool operator<(const Tile &o) const{
+        //    return tile < o.tile ||  (tile == o.tile && rotation < o.rotation);
+        //}
+        bool const operator<(const Tile &o) const {
+            return std::tie(tile, rotation) < std::tie(o.tile, o.rotation);
         }
     };
 
