@@ -8,7 +8,7 @@
 #include <set>
 #include <functional>
 
-#define orth_index(i) Basis(Quat(Vector3(0, 1, 0), -0.5 * i  * M_PI)).get_orthogonal_index()
+#define orth_index(i) Basis(Quat(Vector3(0, 1, 0), -0.5 * i * 3.14159265358979323846)).get_orthogonal_index()
 
 class WaveCollapse : public Node3D {
     GDCLASS(WaveCollapse, Node3D);

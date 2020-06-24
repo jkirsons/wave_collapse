@@ -101,7 +101,7 @@ void WaveCollapse::for_each_tile_in_bitmask(const std::vector<unsigned char>& bi
  * sets the flag for one tile in the valid bitmask
  */
 void WaveCollapse::_bitmask_set_valid(const int& dir, const int& tile, const int& other_tile) {
-    int other_tile_int = other_tile;
+    int other_tile_int = pow(2, other_tile);
 
     // No valid mask yet
     if(valid_combinations_mask[dir].find(tile_mask_reverse_index[tile]) == valid_combinations_mask[dir].end()) {
@@ -112,11 +112,11 @@ void WaveCollapse::_bitmask_set_valid(const int& dir, const int& tile, const int
 
     // Set bit
     for(auto& part : valid_combinations_mask[dir][tile_mask_reverse_index[tile]]) {
-        if(other_tile_int < 0xFF) {
+        if(other_tile_int <= 0xFF) {
             part = part | other_tile_int;
         }
         other_tile_int >>= 8;
-        if(other_tile == 0) {
+        if(other_tile_int == 0) {
             break;
         }
     }
