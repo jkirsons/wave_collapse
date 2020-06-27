@@ -1,14 +1,23 @@
 #include "wave_collapse.h"
 #include <algorithm>
 
+
+
 WaveCollapse::WaveCollapse() {
     setup_done = false;
+}
+
+WaveCollapse::~WaveCollapse() {
+    if(g_future.valid()) {
+        terminate_thread = true;
+        g_future.wait();
+    }
 }
 
 void WaveCollapse::_bind_methods() {
     // exposed methods
     ClassDB::bind_method(D_METHOD("_on_Player_position_changed"), &WaveCollapse::_on_Player_position_changed);
-    ClassDB::bind_method(D_METHOD("process"), &WaveCollapse::process);
+    ClassDB::bind_method(D_METHOD("process_thread"), &WaveCollapse::process_thread);
     ClassDB::bind_method(D_METHOD("set_template_gridmap"), &WaveCollapse::set_template_gridmap);
     ClassDB::bind_method(D_METHOD("get_template_gridmap"), &WaveCollapse::get_template_gridmap);
     ClassDB::bind_method(D_METHOD("set_output_gridmap"), &WaveCollapse::set_output_gridmap);
@@ -83,15 +92,15 @@ int WaveCollapse::_rotate_direction(int init_direction, int steps) {
 /**
  * call a function for all bits in a bitmask
  */
-void WaveCollapse::for_each_tile_in_bitmask(const std::vector<unsigned char>& bitmask, const std::function<void(int)>& func) {
+void WaveCollapse::for_each_tile_in_bitmask(const std::vector<segment_type>& bitmask, const std::function<void(int)>& func) {
     int index = 0;
     for(const auto& part : bitmask) {
-        for(int i = 0; i < 8; i++) {
+        for(int i = 0; i < bits_per_segment; i++) {
             // No bits in this part
             if(part >> i == 0)
                 break;
             if((part >> i) & 1)
-                func(index * 8 + i);
+                func(index * bits_per_segment + i);
         }
         index += 1;
     }
@@ -105,17 +114,17 @@ void WaveCollapse::_bitmask_set_valid(const int& dir, const int& tile, const int
 
     // No valid mask yet
     if(valid_combinations_mask[dir].find(tile_mask_reverse_index[tile]) == valid_combinations_mask[dir].end()) {
-        for(int i = 0;  i < ceil(tile_mask_index.size() / 8.0); i++) {
+        for(int i = 0;  i < ceil(tile_mask_index.size() / (float)bits_per_segment); i++) {
             valid_combinations_mask[dir][tile_mask_reverse_index[tile]].push_back(0x00);
         }
     }
 
     // Set bit
     for(auto& part : valid_combinations_mask[dir][tile_mask_reverse_index[tile]]) {
-        if(other_tile_int <= 0xFF) {
+        if(other_tile_int < std::pow(2, bits_per_segment)) {
             part = part | other_tile_int;
         }
-        other_tile_int >>= 8;
+        other_tile_int >>= bits_per_segment;
         if(other_tile_int == 0) {
             break;
         }
@@ -171,10 +180,7 @@ void WaveCollapse::generate_combinations() {
                         index++;
                     }
 
-                    // Set weights
-                    //if(d == 0) {
-                        weights[tile_mask_index[t]] += 1;
-                    //}                    
+                    weights[tile_mask_index[t]] += 1;                   
                 }
             }
         }
@@ -226,10 +232,9 @@ Vector3 WaveCollapse::_min_entropy_co_ords() {
 
 void WaveCollapse::_new_tile(const Vector3& position) {
     int size = tile_mask_index.size();
-    int char_size = sizeof(unsigned char) * 8;
-    for(int i = 0;  i < ceil( (float)size / (float)char_size); ++i) {
-        int val = std::pow(2, size - i*8 + 1) - 1;
-        unresolved_tiles[position].push_back(std::min(0xFF, val));
+    for(int i = 0;  i < ceil( (float)size / (float)bits_per_segment); ++i) {
+        int val = std::pow(2, size - i*bits_per_segment + 1) - 1;
+        unresolved_tiles[position].push_back(std::min((int)std::pow(2,bits_per_segment)-1, val));
     }
 }
 
@@ -256,8 +261,8 @@ void WaveCollapse::_collapse(const Vector3& position) {
         int index = 0;
         for(auto& part : unresolved_tiles[position]) {
             part = 0;
-            for(int i = 0; i < 8; i++) {
-                if(index * 8 + i == chosen)
+            for(int i = 0; i < bits_per_segment; i++) {
+                if(index * bits_per_segment + i == chosen)
                     part = pow(2, i);
             }
             index += 1;
@@ -286,7 +291,7 @@ void WaveCollapse::_propagate(const Vector3& position) {
 
             if(unresolved_tiles.find(other_position) != unresolved_tiles.end()) {
                 auto unresolved = unresolved_tiles[cur_coords];
-                std::vector<unsigned char> valid_bitmask = {};
+                std::vector<segment_type> valid_bitmask = {};
                 for_each_tile_in_bitmask(unresolved_tiles[cur_coords], [&](int index){
                     if(valid_bitmask.empty()) {
                         valid_bitmask = valid_combinations_mask[d][tile_mask_reverse_index[index]];
@@ -299,8 +304,8 @@ void WaveCollapse::_propagate(const Vector3& position) {
 
                 for(int i = 0; i < (int)unresolved_tiles[other_position].size(); ++i) {
                     // bitwise and with valid tiles
-                    unsigned char new_mask = unresolved_tiles[other_position][i] & valid_bitmask[i];
-                    unsigned char old_mask = unresolved_tiles[other_position][i];
+                    segment_type new_mask = unresolved_tiles[other_position][i] & valid_bitmask[i];
+                    segment_type old_mask = unresolved_tiles[other_position][i];
                     if(new_mask != old_mask) {
                         if(!changed)
                             changed = true;
@@ -332,22 +337,38 @@ void WaveCollapse::_iterate() {
 }
 
 void WaveCollapse::process() {
-    bool collapsed = true;
-    for(auto const& tile : unresolved_tiles) {
-        if(_within_radius(tile.first)) {
-            collapsed = false;
-            break;
-        }
-    }
+    while(!terminate_thread) {
+        const std::lock_guard<std::mutex> lock(g_mutex);
 
-    if(!collapsed) {
-        _iterate();
+        bool collapsed = true;
+        for(auto const& tile : unresolved_tiles) {
+            if(_within_radius(tile.first - player_position)) {
+                collapsed = false;
+                break;
+            }
+        }
+
+        if(!collapsed) {
+            _iterate();
+        } else
+        {
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+        }
+        
+    }
+}
+
+void WaveCollapse::process_thread() {
+    if(!g_future.valid()) {
+        g_future = std::async(std::launch::async, &WaveCollapse::process, this);
     }
 }
 
 void WaveCollapse::_on_Player_position_changed(Vector3 position, int collapse_radius)
 {
     if(position != player_position) {
+        const std::lock_guard<std::mutex> lock(g_mutex);
+
         player_position = position;  
         this->radius = collapse_radius;
         this->radius_squared = radius * radius;
