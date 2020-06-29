@@ -10,6 +10,7 @@
 #include <thread>
 #include <chrono>
 #include <future>
+#include <iostream>
 #include "robin_hood.h"
 
 #define orth_index(i) Basis(Quat(Vector3(0, 1, 0), -0.5 * i * 3.14159265358979323846)).get_orthogonal_index()
@@ -19,11 +20,7 @@ template <> struct std::hash<Vector3>
 {
     std::size_t operator()(const Vector3& k) const
     {
-        //WARN_PRINT(k);
-        //std::size_t i = (((std::hash<float>()(k.x) ^ (std::hash<float>()(k.y) << 1)) >> 1) ^ (std::hash<float>()(k.z) << 1));
-        //WARN_PRINT( std::to_string(i).c_str() );
-
-        // Compute individual hash values for first,
+       // Compute individual hash values for first,
         // second and third and combine them using XOR
         // and bit shifting:
         return ((std::hash<float>()(k.x)
@@ -31,35 +28,32 @@ template <> struct std::hash<Vector3>
                 ^ (std::hash<float>()(k.z) << 1);
     }
 };
-/*
-template <> struct std::hash<WaveCollapse::Tile>
+
+struct Tile {
+    int tile;
+    unsigned short rotation;
+    Tile() {}
+    Tile(int t, unsigned short r) : tile(t), rotation(r) {} 
+    
+    bool const operator<(const Tile &o) const {
+        return std::tie(tile, rotation) < std::tie(o.tile, o.rotation);
+    }
+
+    bool const operator==(const Tile &o) const {
+        return tile == o.tile && rotation == o.rotation;
+    }
+};
+
+template <> struct std::hash<Tile>
 {
-    std::size_t operator()(const WaveCollapse::Tile& k) const
+    std::size_t operator()(const Tile& k) const
     {
         return ((k.tile << 16) + k.rotation);
     }  
 };
-*/
-
 
 class WaveCollapse : public Node3D {
     GDCLASS(WaveCollapse, Node3D);
-
-    struct Tile {
-        int tile;
-        unsigned short rotation;
-        Tile() {}
-        Tile(int t, unsigned short r) : tile(t), rotation(r) {} 
-        
-        //bool operator<(const Tile &o) const{
-        //    return tile < o.tile ||  (tile == o.tile && rotation < o.rotation);
-        //}
-        bool const operator<(const Tile &o) const {
-            return std::tie(tile, rotation) < std::tie(o.tile, o.rotation);
-        }
-
-
-    };
 
 #define segment_type unsigned long long   
     const int bits_per_segment = std::numeric_limits<segment_type>::digits;
@@ -78,15 +72,15 @@ class WaveCollapse : public Node3D {
     std::map<Vector3, int> template_map_tile;
     std::map<Vector3, int> template_map_rotation;
 
-    std::unordered_map<int, int> weights; // tile, weight
-    std::unordered_map<Vector3, Tile> resolved_tiles;
+    robin_hood::unordered_map<int, int> weights; // tile, weight
+    robin_hood::unordered_map<Vector3, Tile> resolved_tiles;
     std::unordered_map<Vector3, std::vector<segment_type>> unresolved_tiles; // position, bitmask
 
-    std::unordered_map<int, std::map<Tile, std::set<Tile>>> valid_combinations;  // direction, tile, other_tiles
-    std::unordered_map<int, std::map<Tile, std::vector<segment_type>>> valid_combinations_mask;  // direction, tile, other_tiles_mask
+    robin_hood::unordered_map<int, robin_hood::unordered_map<Tile, std::set<Tile>>> valid_combinations;  // direction, tile, other_tiles
+    robin_hood::unordered_map<int, robin_hood::unordered_map<Tile, std::vector<segment_type>>> valid_combinations_mask;  // direction, tile, other_tiles_mask
     
-    std::map<Tile, int> tile_mask_index; // Tile --> int for bitmap mask
-    std::unordered_map<int, Tile> tile_mask_reverse_index;
+    robin_hood::unordered_map<Tile, int> tile_mask_index; // Tile --> int for bitmap mask
+    robin_hood::unordered_map<int, Tile> tile_mask_reverse_index;
 
     std::mutex g_mutex;
     std::future<void> g_future;
@@ -125,7 +119,7 @@ public:
 
     void generate_combinations();
 
-    void _on_Player_position_changed(Vector3 position, int collapse_radius);
+    void _on_Player_position_changed(const Vector3& position, const int& collapse_radius);
     void process();
     void process_thread();
 

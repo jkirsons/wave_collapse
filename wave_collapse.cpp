@@ -1,8 +1,6 @@
 #include "wave_collapse.h"
 #include <algorithm>
 
-
-
 WaveCollapse::WaveCollapse() {
     setup_done = false;
 }
@@ -293,6 +291,8 @@ void WaveCollapse::_propagate(const Vector3& position) {
                 auto unresolved = unresolved_tiles[cur_coords];
                 std::vector<segment_type> valid_bitmask = {};
                 for_each_tile_in_bitmask(unresolved_tiles[cur_coords], [&](int index){
+                    // determine the valid bitmask for the other cell based on the 
+                    // current cell's possible tiles.  Valid mask = OR of all valid masks
                     if(valid_bitmask.empty()) {
                         valid_bitmask = valid_combinations_mask[d][tile_mask_reverse_index[index]];
                     } else {
@@ -302,14 +302,15 @@ void WaveCollapse::_propagate(const Vector3& position) {
                     }
                 });
 
-                for(int i = 0; i < (int)unresolved_tiles[other_position].size(); ++i) {
-                    // bitwise and with valid tiles
-                    segment_type new_mask = unresolved_tiles[other_position][i] & valid_bitmask[i];
-                    segment_type old_mask = unresolved_tiles[other_position][i];
-                    if(new_mask != old_mask) {
-                        if(!changed)
+                if(valid_bitmask.size() > 0) {
+                    for(int i = 0; i < (int)unresolved_tiles[other_position].size(); ++i) {
+                        // Do a bitwise AND with valid bitmask to see if the other cell tiles are valid
+                        segment_type old_mask = unresolved_tiles[other_position][i];
+                        segment_type new_mask = old_mask & valid_bitmask[i];
+                        if(new_mask != old_mask) {
                             changed = true;
-                        unresolved_tiles[other_position][i] = new_mask;
+                            unresolved_tiles[other_position][i] = new_mask;
+                        }
                     }
                 }
 
@@ -337,24 +338,42 @@ void WaveCollapse::_iterate() {
 }
 
 void WaveCollapse::process() {
-    while(!terminate_thread) {
-        const std::lock_guard<std::mutex> lock(g_mutex);
+    auto start_time = std::chrono::steady_clock::now();
+    bool finished = false;
 
+    while(!terminate_thread) {
         bool collapsed = true;
-        for(auto const& tile : unresolved_tiles) {
-            if(_within_radius(tile.first - player_position)) {
-                collapsed = false;
-                break;
+        {
+            // lock to prevent main thread doesn't change player position
+            const std::lock_guard<std::mutex> lock(g_mutex);
+            for(auto const& tile : unresolved_tiles) {
+                if(_within_radius(tile.first - player_position)) {
+                    collapsed = false;
+                    break;
+                }
+            }
+
+            // resolve 1 tile
+            if(!collapsed) {
+                if(finished) {
+                    start_time = std::chrono::steady_clock::now();
+                    finished = false;
+                }
+                _iterate();
+                std::cout << ".";
             }
         }
+        if(collapsed) {
+            if(!finished) {
+                finished = true;
+                auto end_time = std::chrono::steady_clock::now();
+                auto time_dur = std::chrono::duration<double>( end_time - start_time ).count();
+                std::cout << std::endl << "WaveCollapse Time: " << std::to_string(time_dur) << std::endl;
+            }
 
-        if(!collapsed) {
-            _iterate();
-        } else
-        {
-            std::this_thread::sleep_for(std::chrono::seconds(1));
+            // don't waste time when there is nothing to do
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
-        
     }
 }
 
@@ -364,11 +383,11 @@ void WaveCollapse::process_thread() {
     }
 }
 
-void WaveCollapse::_on_Player_position_changed(Vector3 position, int collapse_radius)
+void WaveCollapse::_on_Player_position_changed(const Vector3& position, const int& collapse_radius)
 {
     if(position != player_position) {
+        std::cout << "Position Changed" << std::endl;
         const std::lock_guard<std::mutex> lock(g_mutex);
-
         player_position = position;  
         this->radius = collapse_radius;
         this->radius_squared = radius * radius;
