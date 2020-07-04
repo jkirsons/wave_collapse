@@ -26,7 +26,7 @@ void WaveCollapse::_bind_methods() {
     ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "Output Gridmap", PROPERTY_HINT_NODE_PATH_VALID_TYPES), "set_output_gridmap", "get_output_gridmap");
     
     // signals emitted
-    ADD_SIGNAL(MethodInfo("cell_changed", PropertyInfo(Variant::VECTOR3, "cell"), PropertyInfo(Variant::INT, "tile"), PropertyInfo(Variant::INT, "orientation")));
+    ADD_SIGNAL(MethodInfo("cell_changed", PropertyInfo(Variant::VECTOR3I, "cell"), PropertyInfo(Variant::INT, "tile"), PropertyInfo(Variant::INT, "orientation")));
 }
 
 void WaveCollapse::set_template_gridmap(const NodePath &template_gridmap) {
@@ -139,19 +139,19 @@ void WaveCollapse::generate_combinations() {
     // Create maps of tiles and rotations
     Array cells = template_gridmap->get_used_cells();
     for (int i = 0; i < cells.size(); i++) {
-        const Vector3& vec = (Vector3)cells[i];
-        template_map_tile.emplace(std::pair<Vector3, int>(vec, 
-            template_gridmap->get_cell_item(vec.x, vec.y, vec.z)));
+        const Vector3i& vec = (Vector3i)cells[i];
+        template_map_tile.emplace(std::pair<Vector3i, int>(vec, 
+            template_gridmap->get_cell_item(vec)));
 
-        template_map_rotation.emplace(std::pair<Vector3, int>(vec,
-            template_gridmap->get_cell_item_orientation(vec.x, vec.y, vec.z)));
+        template_map_rotation.emplace(std::pair<Vector3i, int>(vec,
+            template_gridmap->get_cell_item_orientation(vec)));
     }
 
     // Generate valid tile combinations
     int index = 1;    
     for(auto const& [pos, tile] : template_map_tile) {
         for(unsigned int d = 0; d < directions.size(); ++d) {
-            Vector3 other_pos = pos + directions[d];
+            Vector3i other_pos = pos + directions[d];
             if(template_map_tile.count(other_pos) > 0) {
                 for(int r = 0; r < 4; r++) {
                     unsigned short tile_rot = _rotate_tile(template_map_rotation[pos], r);
@@ -194,7 +194,7 @@ void WaveCollapse::generate_combinations() {
 
 }
 
-float WaveCollapse::_shannon_entropy(Vector3 position)
+float WaveCollapse::_shannon_entropy(Vector3i position)
 {
     float sum_of_weights = 0.0;
     float sum_of_weight_log_weights = 0.0;
@@ -213,11 +213,12 @@ float WaveCollapse::_shannon_entropy(Vector3 position)
     return log(sum_of_weights) - (sum_of_weight_log_weights / sum_of_weights);
 }
 
-Vector3 WaveCollapse::_min_entropy_co_ords() {
+Vector3i WaveCollapse::_min_entropy_co_ords() {
     float min_entropy = 0.0;
-    Vector3 min_entropy_co_ords = Vector3();
+    Vector3i min_entropy_co_ords = Vector3i();
     for(const auto& tile : unresolved_tiles) {
-        if(tile.first.distance_squared_to(player_position) <= radius_squared) {
+        Vector3i diff = tile.first - player_position;
+        if(diff.x*diff.x + diff.z*diff.z <= radius_squared) {
             float entropy = _shannon_entropy(tile.first) + (rand() % 100) / 100000.0;
             if( min_entropy == 0.0 || entropy < min_entropy) {
                 min_entropy = entropy;
@@ -228,7 +229,7 @@ Vector3 WaveCollapse::_min_entropy_co_ords() {
     return min_entropy_co_ords;
 }
 
-void WaveCollapse::_new_tile(const Vector3& position) {
+void WaveCollapse::_new_tile(const Vector3i& position) {
     int size = tile_mask_index.size();
     for(int i = 0;  i < ceil( (float)size / (float)bits_per_segment); ++i) {
         int val = std::pow(2, size - i*bits_per_segment + 1) - 1;
@@ -236,7 +237,7 @@ void WaveCollapse::_new_tile(const Vector3& position) {
     }
 }
 
-void WaveCollapse::_collapse(const Vector3& position) {
+void WaveCollapse::_collapse(const Vector3i& position) {
     int total_weights = 0;
     int chosen = -1;
     auto iterator = unresolved_tiles.find(position);
@@ -272,16 +273,16 @@ void WaveCollapse::_collapse(const Vector3& position) {
     }
 }
 
-void WaveCollapse::_propagate(const Vector3& position) {
-    std::vector<Vector3> stack;
+void WaveCollapse::_propagate(const Vector3i& position) {
+    std::vector<Vector3i> stack;
     stack.push_back(position);
 
     while(!stack.empty()) {
-        Vector3 cur_coords = stack.back();
+        Vector3i cur_coords = stack.back();
         stack.pop_back();
         
         for(unsigned int d = 0; d < directions.size(); ++d) {
-            Vector3 other_position = cur_coords + directions[d];
+            Vector3i other_position = cur_coords + directions[d];
             if(other_position == position) { 
                 continue;  // don't propagate back to original point
             }
@@ -325,14 +326,14 @@ void WaveCollapse::_propagate(const Vector3& position) {
     }
 }
 
-bool WaveCollapse::_within_radius(const Vector3& position) {
+bool WaveCollapse::_within_radius(const Vector3i& position) {
     if(position.x*position.x + position.z*position.z <= radius_squared)
         return true;
     return false;
 }
 
 void WaveCollapse::_iterate() {
-    Vector3 co_ords = _min_entropy_co_ords();
+    Vector3i co_ords = _min_entropy_co_ords();
     _collapse(co_ords);
     emit_signal("cell_changed", co_ords, resolved_tiles[co_ords].tile, resolved_tiles[co_ords].rotation);
 }
@@ -383,7 +384,7 @@ void WaveCollapse::process_thread() {
     }
 }
 
-void WaveCollapse::_on_Player_position_changed(const Vector3& position, const int& collapse_radius)
+void WaveCollapse::_on_Player_position_changed(const Vector3i& position, const int& collapse_radius)
 {
     if(position != player_position) {
         std::cout << "Position Changed" << std::endl;
@@ -407,8 +408,8 @@ void WaveCollapse::_setup(int y) {
 
         for(int x = -radius; x <= radius; ++x) {
             for(int z = -radius; z <= radius; ++z) {
-                if(_within_radius(Vector3(x,y,z))) {
-                    _new_tile(Vector3(x,y,z));
+                if(_within_radius(Vector3i(x,y,z))) {
+                    _new_tile(Vector3i(x,y,z));
                 }
             }
         }

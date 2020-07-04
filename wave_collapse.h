@@ -16,9 +16,9 @@
 #define orth_index(i) Basis(Quat(Vector3(0, 1, 0), -0.5 * i * 3.14159265358979323846)).get_orthogonal_index()
 
 
-template <> struct std::hash<Vector3>
+template <> struct std::hash<Vector3i>
 {
-    std::size_t operator()(const Vector3& k) const
+    std::size_t operator()(const Vector3i& k) const
     {
        // Compute individual hash values for first,
         // second and third and combine them using XOR
@@ -58,7 +58,7 @@ class WaveCollapse : public Node3D {
 #define segment_type unsigned long long   
     const int bits_per_segment = std::numeric_limits<segment_type>::digits;
     
-    const std::vector<Vector3> directions = {Vector3(0,0,-1), Vector3(1,0,0), Vector3(0,0,1), Vector3(-1,0,0)};
+    const std::vector<Vector3i> directions = {Vector3i(0,0,-1), Vector3i(1,0,0), Vector3i(0,0,1), Vector3i(-1,0,0)};
 
     // internal indexes used by GridMap cell orientation
     const std::vector<int> orthagonal_indices = {orth_index(0), orth_index(1), orth_index(2), orth_index(3)};
@@ -69,12 +69,12 @@ class WaveCollapse : public Node3D {
     NodePath output_gridmap_path;
     GridMap* output_gridmap;
 
-    std::map<Vector3, int> template_map_tile;
-    std::map<Vector3, int> template_map_rotation;
+    std::map<Vector3i, int> template_map_tile;
+    std::map<Vector3i, int> template_map_rotation;
 
     robin_hood::unordered_map<int, int> weights; // tile, weight
-    robin_hood::unordered_map<Vector3, Tile> resolved_tiles;
-    std::unordered_map<Vector3, std::vector<segment_type>> unresolved_tiles; // position, bitmask
+    robin_hood::unordered_map<Vector3i, Tile> resolved_tiles;
+    std::unordered_map<Vector3i, std::vector<segment_type>> unresolved_tiles; // position, bitmask
 
     robin_hood::unordered_map<int, robin_hood::unordered_map<Tile, std::set<Tile>>> valid_combinations;  // direction, tile, other_tiles
     robin_hood::unordered_map<int, robin_hood::unordered_map<Tile, std::vector<segment_type>>> valid_combinations_mask;  // direction, tile, other_tiles_mask
@@ -89,20 +89,20 @@ class WaveCollapse : public Node3D {
     template<typename T> T* _path_to_object(const NodePath &path);
     unsigned short _rotate_tile(int init_orth_index, int steps);
     int _rotate_direction(int init_direction, int steps);
-    float _shannon_entropy(Vector3 position);
+    float _shannon_entropy(Vector3i position);
 
     void for_each_tile_in_bitmask(const std::vector<segment_type> &bitmask, const std::function<void(int)> &func);
     void _bitmask_set_valid(const int& dir, const int& tile, const int& other_tile);
-    Vector3 _min_entropy_co_ords();
-    void _propagate(const Vector3& position);
+    Vector3i _min_entropy_co_ords();
+    void _propagate(const Vector3i& position);
     void _iterate();
-    void _collapse(const Vector3& position);
-    void _new_tile(const Vector3& position);
+    void _collapse(const Vector3i& position);
+    void _new_tile(const Vector3i& position);
     void _setup(int y);
     
-    bool _within_radius(const Vector3& position);
+    bool _within_radius(const Vector3i& position);
 
-    Vector3 player_position;
+    Vector3i player_position;
     int radius = 0;
     int radius_squared = 0;
     bool setup_done = false;
@@ -119,7 +119,7 @@ public:
 
     void generate_combinations();
 
-    void _on_Player_position_changed(const Vector3& position, const int& collapse_radius);
+    void _on_Player_position_changed(const Vector3i& position, const int& collapse_radius);
     void process();
     void process_thread();
 
