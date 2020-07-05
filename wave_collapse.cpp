@@ -108,7 +108,7 @@ void WaveCollapse::for_each_tile_in_bitmask(const std::vector<segment_type>& bit
  * sets the flag for one tile in the valid bitmask
  */
 void WaveCollapse::_bitmask_set_valid(const int& dir, const int& tile, const int& other_tile) {
-    int other_tile_int = pow(2, other_tile);
+	segment_type other_tile_int = pow(2, other_tile);
 
     // No valid mask yet
     if(valid_combinations_mask[dir].find(tile_mask_reverse_index[tile]) == valid_combinations_mask[dir].end()) {
@@ -133,7 +133,7 @@ void WaveCollapse::generate_combinations() {
     if(template_gridmap == nullptr)
         return;
 
-    std::vector<int> symetric_tiles = {9, 15, 16};
+    std::vector<int> symetric_tiles = {11, 17, 18};
     std::sort(symetric_tiles.begin(), symetric_tiles.end());
 
     // Create maps of tiles and rotations
@@ -184,14 +184,25 @@ void WaveCollapse::generate_combinations() {
         }
     }
 
+	all_combinations_bitmask = {};
     for(unsigned int d = 0; d < directions.size(); ++d) {
         for(const auto& [tile, other_tiles] : valid_combinations[d]) {
             for(const auto& other_tile : other_tiles) {
+				// set valid combinations bitmask
                 _bitmask_set_valid(d, tile_mask_index[tile], tile_mask_index[other_tile]);
+
+				// generate initial tile mask
+				if (all_combinations_bitmask.empty()) {
+					all_combinations_bitmask = valid_combinations_mask[d][tile];
+				} else {
+					for (int i = 0; i < (int)all_combinations_bitmask.size(); ++i) {
+						all_combinations_bitmask[i] |= valid_combinations_mask[d][tile][i];
+					}
+				}
             }
         }
     }
-
+	
 }
 
 float WaveCollapse::_shannon_entropy(Vector3i position)
@@ -230,15 +241,19 @@ Vector3i WaveCollapse::_min_entropy_co_ords() {
 }
 
 void WaveCollapse::_new_tile(const Vector3i& position) {
-    int size = tile_mask_index.size();
+	/*
+	int size = tile_mask_index.size();
     for(int i = 0;  i < ceil( (float)size / (float)bits_per_segment); ++i) {
-        int val = std::pow(2, size - i*bits_per_segment + 1) - 1;
-        unresolved_tiles[position].push_back(std::min((int)std::pow(2,bits_per_segment)-1, val));
+		segment_type val = std::min((segment_type)std::pow(2, bits_per_segment) - 1,
+			(segment_type)std::pow(2, size - i * bits_per_segment + 1 ) - 1);
+		unresolved_tiles[position].push_back(val);
     }
+	*/
+	unresolved_tiles[position] = all_combinations_bitmask;
 }
 
 void WaveCollapse::_collapse(const Vector3i& position) {
-    int total_weights = 0;
+    unsigned long total_weights = 0;
     int chosen = -1;
     auto iterator = unresolved_tiles.find(position);
     if( iterator != unresolved_tiles.end()) {
@@ -253,6 +268,7 @@ void WaveCollapse::_collapse(const Vector3i& position) {
             if(rnd < 0.0 && chosen == -1) {
                 resolved_tiles[position] = tile_mask_reverse_index[index];
                 chosen = index;
+				std::cout << "Chosen: " << chosen << std::endl;
             }
         });
 
@@ -266,11 +282,9 @@ void WaveCollapse::_collapse(const Vector3i& position) {
             }
             index += 1;
         }
-
-        _propagate(position);
-        
-        unresolved_tiles.erase(iterator);
-    }
+		_propagate(position);
+		unresolved_tiles.erase(iterator);
+	}
 }
 
 void WaveCollapse::_propagate(const Vector3i& position) {
@@ -287,6 +301,12 @@ void WaveCollapse::_propagate(const Vector3i& position) {
                 continue;  // don't propagate back to original point
             }
             bool changed = false;
+
+			if (unresolved_tiles.find(other_position) == unresolved_tiles.end()
+				&& resolved_tiles.find(other_position) == resolved_tiles.end()) {
+                // Other tile is not in resolved or unresolved - so add that tile to unresolved list
+                _new_tile(other_position);
+            }
 
             if(unresolved_tiles.find(other_position) != unresolved_tiles.end()) {
                 auto unresolved = unresolved_tiles[cur_coords];
@@ -314,11 +334,8 @@ void WaveCollapse::_propagate(const Vector3i& position) {
                         }
                     }
                 }
-
-            } else if(resolved_tiles.find(other_position) == resolved_tiles.end()) {
-                // Add tile
-                _new_tile(other_position);
             }
+
             if(changed) {
                 stack.push_back(other_position);
             }
@@ -362,6 +379,7 @@ void WaveCollapse::process() {
                 }
                 _iterate();
                 std::cout << ".";
+				//std::this_thread::sleep_for(std::chrono::milliseconds(300));
             }
         }
         if(collapsed) {

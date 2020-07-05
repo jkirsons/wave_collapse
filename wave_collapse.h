@@ -55,7 +55,10 @@ template <> struct std::hash<Tile>
 class WaveCollapse : public Node3D {
     GDCLASS(WaveCollapse, Node3D);
 
-#define segment_type unsigned long long   
+#define segment_type unsigned long long
+#define map_type robin_hood::unordered_map
+//#define map_type std::unordered_map
+
     const int bits_per_segment = std::numeric_limits<segment_type>::digits;
     
     const std::vector<Vector3i> directions = {Vector3i(0,0,-1), Vector3i(1,0,0), Vector3i(0,0,1), Vector3i(-1,0,0)};
@@ -72,15 +75,15 @@ class WaveCollapse : public Node3D {
     std::map<Vector3i, int> template_map_tile;
     std::map<Vector3i, int> template_map_rotation;
 
-    robin_hood::unordered_map<int, int> weights; // tile, weight
-    robin_hood::unordered_map<Vector3i, Tile> resolved_tiles;
+    map_type<int, int> weights; // tile, weight
+    map_type<Vector3i, Tile> resolved_tiles;
     std::unordered_map<Vector3i, std::vector<segment_type>> unresolved_tiles; // position, bitmask
 
-    robin_hood::unordered_map<int, robin_hood::unordered_map<Tile, std::set<Tile>>> valid_combinations;  // direction, tile, other_tiles
-    robin_hood::unordered_map<int, robin_hood::unordered_map<Tile, std::vector<segment_type>>> valid_combinations_mask;  // direction, tile, other_tiles_mask
+    map_type<int, map_type<Tile, std::set<Tile>>> valid_combinations;  // direction, tile, other_tiles
+    map_type<int, map_type<Tile, std::vector<segment_type>>> valid_combinations_mask;  // direction, tile, other_tiles_mask
     
-    robin_hood::unordered_map<Tile, int> tile_mask_index; // Tile --> int for bitmap mask
-    robin_hood::unordered_map<int, Tile> tile_mask_reverse_index;
+    map_type<Tile, int> tile_mask_index; // Tile --> int for bitmap mask
+    map_type<int, Tile> tile_mask_reverse_index;
 
     std::mutex g_mutex;
     std::future<void> g_future;
@@ -106,6 +109,7 @@ class WaveCollapse : public Node3D {
     int radius = 0;
     int radius_squared = 0;
     bool setup_done = false;
+	std::vector<segment_type> all_combinations_bitmask;
 
 protected:
     static void _bind_methods();
